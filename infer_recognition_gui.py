@@ -3,6 +3,7 @@ import functools
 import threading
 import tkinter as tk
 from tkinter import simpledialog
+import shutil
 
 import numpy as np
 import soundcard as sc
@@ -10,6 +11,8 @@ import soundcard as sc
 from mvector.predict import MVectorPredictor
 from mvector.utils.record import RecordAudio
 from mvector.utils.utils import add_arguments, print_arguments
+import os
+from tqdm import tqdm
 
 parser = argparse.ArgumentParser(description=__doc__)
 add_arg = functools.partial(add_arguments, argparser=parser)
@@ -19,7 +22,6 @@ add_arg('audio_db_path',    str,    'audio_db/',                '音频库的路
 add_arg('model_path',       str,    'models/CAMPPlus_Fbank/best_model/', '导出的预测模型文件路径')
 args = parser.parse_args()
 print_arguments(args=args)
-
 
 class VoiceRecognitionGUI:
     def __init__(self, master):
@@ -48,6 +50,20 @@ class VoiceRecognitionGUI:
         self.threshold = tk.StringVar(value='0.6')
         self.threshold_entry = tk.Entry(master, width=30, textvariable=self.threshold)
         self.threshold_entry.place(x=90, y=40)
+        # Add input box for file path
+        self.file_path_label = tk.Label(master, text="文件路径:")
+        self.file_path_label.place(x=3, y=170)
+        self.folder_path = tk.StringVar()
+        self.file_path_entry = tk.Entry(master, width=30, textvariable=self.folder_path)
+        self.file_path_entry.place(x=90, y=170)
+        self.correct = 0
+        self.secondary_correct = 0
+        self.third_correct = 0
+        self.rounds = 0
+
+        # Add button to trigger file path input
+        self.file_path_button = tk.Button(master, text="处理文件路径", command=self.process_folder)
+        self.file_path_button.place(x=300, y=170)
         # 选择功能标签和按钮
         self.label = tk.Label(master, text="请选择功能：")
         self.label.place(x=12, y=90)
@@ -136,6 +152,77 @@ class VoiceRecognitionGUI:
             while self.recognizing:
                 data = mic.record(numframes=self.numframes)
                 self.record_data.append(data)
+
+    def early_stopping(self):
+        if self.correct / self.rounds < 0.2:
+            return True
+        else :
+            return False
+
+    def process_folder(self):
+        # Remove double quotes from the folder path
+        folder_path = self.folder_path.get()
+        folder_path = folder_path.replace('"', '')
+
+        # Ensure the folder path is correctly formatted
+        folder_path = folder_path.strip()
+
+        # Check if the folder exists
+        if not os.path.exists(folder_path):
+            self.result_label.config(text="文件夹路径不存在")
+            return
+
+        # List all files in the folder
+        for file_name in tqdm(os.listdir(folder_path)):
+            file_path = os.path.join(folder_path, file_name)
+            if os.path.isfile(file_path):
+                self.process_file(file_path)
+            self.rounds = self.rounds + 1
+            if self.rounds >= 300:
+                if self.early_stopping():
+                    print(f"Early stopping because of low accuracy of {self.correct / self.rounds * 100}%")
+                    self.rounds = 0
+                    break
+
+        print(f"{self.correct} / {self.rounds}")
+
+    def process_file(self, file_path):
+        # Remove double quotes from the file path
+        file_path = file_path.replace('"', '')
+
+        # Ensure the file path is correctly formatted
+        file_path = file_path.strip()
+        audio_data, sample_rate = self.record_audio.load_audio(file_path)
+        name, score = self.predictor.recognition(audio_data, float(self.threshold.get()), sample_rate)
+
+        # Split the file path by underscore and get the last three parts
+        parts = file_path.split('_')
+        name_sn = parts[-2]
+        last_three_parts = parts[-5:]
+        result_sn = '_'.join(last_three_parts)
+
+        if self.rounds % 100 == 1:
+            print(f"准确率：{self.correct / self.rounds * 100}%")
+            print(f"次要准确：{self.secondary_correct}")
+            print(f"三次准确：{self.third_correct}")
+
+        if name_sn == "Chloe":
+            self.third_correct = self.third_correct + 1
+
+        if name_sn == "Chloe":
+            self.secondary_correct = self.secondary_correct + 1
+
+
+        if name:
+
+
+            shutil.copy(file_path, f"Diverge/{name}/{result_sn}")
+            if name_sn == name:
+
+                self.correct = self.correct + 1
+        #else:
+            #print(f"文件: {file_path}, 没有识别到说话人")
+            shutil.copy(file_path, f"Diverge/Unknown/{result_sn}")
 
 
 if __name__ == '__main__':
